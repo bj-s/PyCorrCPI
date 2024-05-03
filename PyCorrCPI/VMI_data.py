@@ -1,7 +1,7 @@
 from .imports import *
 from .helpers_numba import *
 from .covariance import *
-
+from .VMI_utils import TofCalibration, get_ion_mass, get_ion_charge, get_ion_mz
 
 
 
@@ -164,6 +164,95 @@ class Ion:
         return(data_df_ion)    
 
 
+class IonCollection:
+    """Class used to define/manage a set of ions"""
+    def __init__(
+        self, center_x:Optional[float]=None, 
+        center_y:Optional[float]=None, 
+        filter_param:Optional[str]=None, 
+        allow_auto_mass_charge:Optional[bool]=None, 
+        shot_array_method:Optional[str]=None,
+        C_xy:Optional[float]=None,
+        C_z:Optional[float]=None,
+    ):
+        self._data = list()
+        self._filter_param = filter_param
+        self._allow_auto_mass_charge = allow_auto_mass_charge
+        self._shot_array_method = shot_array_method
+        self._center_x = center_x
+        self._center_y = center_y
+        self._C_xy = C_xy
+        self._C_z = C_z
+        
+        self.tof_mz_cal = TofCalibration()
+        
+        
+
+        optional_kwargs = dict()
+        if self._filter_param:
+            optional_kwargs["filter_param"] = self._filter_param
+        if self._allow_auto_mass_charge is not None:
+            optional_kwargs["allow_auto_mass_charge"] = self._allow_auto_mass_charge
+        if self._shot_array_method:
+            optional_kwargs["shot_array_method"] = self._shot_array_method
+        if self._center_x:
+            optional_kwargs["center_x"] = self._center_x
+        if self._center_y:
+            optional_kwargs["center_y"] = self._center_y
+        if self._C_xy:
+            optional_kwargs["C_xy"] = self._C_xy
+        if self._C_z:
+            optional_kwargs["C_z"] = self._C_z
+
+        self._ion_class = partial(Ion, **optional_kwargs)
+        
+    def __getitem__(self, index):
+        return self._data[index]
+    
+    def __iter__(self, *args, **kwargs):
+        return self._data.__iter__(*args, **kwargs)
+    
+    def __len__(self):
+        return len(self._data)
+        
+    def __str__(self):
+        return str([ion.label for ion in self._data])
+    
+    def __repr__(self):
+        return f"Collection with {len(self._data)} ions:\n{str(self)}"
+    
+    @property
+    def data(self):
+        return self._data
+    
+    @wraps(Ion)
+    def add_ion(self, *args, **kwargs):
+        # create ion and append it
+        self._data.append(self._ion_class(*args, **kwargs))
+        
+    def assign_dataset(self, dataset):
+        for ion in self._data:
+            ion.assign_dataset(dataset)
+            
+    def mz_calibration(self):
+        tof_list = []
+        mz_list = []
+        for ion in self.data:
+            if ion.mass is not None and ion.charge is not None:
+                tof_list.append(ion.center_t)
+                mz_list.append(ion.mass/ion.charge)
+
+        mz_arr = np.array(mz_list)
+        tof_arr = np.array(tof_list)
+        
+        coeffs, pcov = self.tof_mz_cal.calibrate(tof_arr, mz_arr)
+        
+        print(coeffs, pcov)
+        
+    def calibrate_momenta(self):
+        for ion in self.data:
+            ion.calibrate_momenta(self.tof_mz_cal.t0)
+    
 
 class Dataset:
     def __init__(self, data_df, C_xy = None, C_z = None, shot_array_method = 'range'):

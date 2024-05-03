@@ -1,5 +1,7 @@
 from functools import wraps, partial
 from typing import Union, Optional
+import json
+import os
 
 from .imports import *
 from .helpers_numba import *
@@ -69,6 +71,24 @@ class Ion:
         #     self.center_t = (self.Ti+self.Tf)/2
         if dataset:
             self.assign_dataset(dataset)
+            
+    @property
+    def config(self):
+        return dict(
+            label=self.label, 
+            filter_i=self.filter_i, 
+            filter_f=self.filter_f, 
+            filter_param=self.filter_param,
+            center_x=self.center_x, 
+            center_y=self.center_y, 
+            center_t=self.center_t, 
+            mass=self.mass, 
+            charge=self.charge, 
+            shot_array_method=self.shot_array_method, 
+            allow_auto_mass_charge=self.allow_auto_mass_charge,
+            C_xy=self.C_xy,
+            C_z=self.C_z
+        )
 
             
     def print_details(self):
@@ -227,6 +247,41 @@ class IonCollection:
     @property
     def data(self):
         return self._data
+    
+    @property
+    def config(self):
+        return dict(
+            center_x=self._center_x, 
+            center_y=self._center_y, 
+            filter_param=self._filter_param, 
+            allow_auto_mass_charge=self._allow_auto_mass_charge, 
+            shot_array_method=self._shot_array_method,
+            C_xy=self.C_xy,
+            C_z=self.C_z,
+        )
+    
+    def export_config_file(self, output_path:str):
+        """
+        Export IonCollection incl. ions into a config file
+        """
+        full_config = dict()
+        full_config["IonCollection"] = self.config
+        full_config["Ions"] = [ion.config for ion in self.data]
+        if not output_path.endswith(".json"):
+            output_path = f"{output_path}.json"
+        with open(output_path, 'w') as f:
+            json.dump(full_config, f)    
+    
+    @classmethod
+    def from_config_file(cls, input_path):
+        """
+        Construct IonCollection incl. ions from a given config file
+        """
+        with open(input_path, 'r') as f:
+            full_config = json.load(f)  
+        ic = cls(**full_config["IonCollection"])
+        for ion_conf in full_config["Ions"]:
+            ic.add_ion(**ion_conf)
     
     @wraps(Ion)
     def add_ion(self, *args, **kwargs):

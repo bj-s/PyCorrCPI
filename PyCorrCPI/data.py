@@ -13,8 +13,8 @@ from .helpers_tof import TofCalibration, get_ion_mass, get_ion_charge, get_ion_m
 class Ion:
     """Class used to define the parameters to extract data from different ions from a dataset"""
     def __init__(self, label, filter_i, filter_f, dataset=None, filter_param='tof', 
-                center_x=None, center_y=None, center_t=None, mass=None, charge=None, shot_array_method='range', allow_auto_mass_charge=False,
-                C_xy=None, C_z=None, filter_query:str=None
+                center_x=None, center_y=None, center_t=None, mass=None, charge=None, shot_array_method='range', allow_auto_mass_charge=False, fit_t=False,
+                C_xy=None, C_z=None, filter_query:str=None, mz_calibration:TofCalibration=None
                 ):
         """
         Parameters
@@ -30,11 +30,14 @@ class Ion:
             charge (float, optional):
             shot_array_method (str, optional):
             allow_auto_mass_charge (bool, optional):
+            fit_t (bool, optional): if true, when a calibration available use fitted t_center
             C_xy (float, optional):
             C_z (float, optional):
             filter_query (str, optional):
                 query that will be applied to the ions data frame, 
                 enables realization of comples rois to exclude data (e.g. warm background)
+            mz_calibration (TofCalibration, optional):
+                ToF calibration to have a fitted center_t
         
         """
         self._data_array = None
@@ -46,6 +49,8 @@ class Ion:
         self.filter_param = filter_param
         self.shot_array_method = shot_array_method
         self.allow_auto_mass_charge = allow_auto_mass_charge
+        self.mz_calibration = mz_calibration
+        self.fit_t = fit_t
         
         self.C_xy = C_xy # for momentum calib
         self.C_z = C_z # for momentum calib
@@ -109,9 +114,11 @@ class Ion:
             charge=self.charge, 
             shot_array_method=self.shot_array_method, 
             allow_auto_mass_charge=self.allow_auto_mass_charge,
+            fit_t = self.fit_t,
             C_xy=self.C_xy,
             C_z=self.C_z,
             filter_query=self.filter_query,
+            mz_calibration=self.mz_calibration,
         )
 
             
@@ -162,6 +169,15 @@ class Ion:
         
         calculate_indexes(idx_dict,self.shot_array,shot_array_total,self.data_array)
         self.idx_dict=idx_dict
+    
+    @property
+    def mz(self):
+        return self.charge/self.mass
+        
+    @property
+    def fitted_center_t(self):
+        if self.mz_calibration:
+            return self.mz_calibration.mz_to_tof(self.mz)
 
     def calibrate_momenta(self, t0:float, C_xy=None, C_z=None, fit_center=False):
         data_df_ion = self.data_df
@@ -182,6 +198,8 @@ class Ion:
             data_df_ion['x_centered'] = data_df_ion.x-self.center_x
             data_df_ion['y_centered'] = data_df_ion.y-self.center_y
             
+        center_t = self.fitted_center_t if self.fit_t and self.mz_calibration else self.center_t
+            
         # if this is the first time the dataset has had momentum calibration run on it, populate new columns
         # in the dataframe
         if self.cal_mom==False:
@@ -198,7 +216,7 @@ class Ion:
             self.cal_mom=True
         
         data_df_ion['t_absolute'] = data_df_ion['tof']-t0
-        data_df_ion['t_centered'] = data_df_ion['tof']-self.center_t
+        data_df_ion['t_centered'] = data_df_ion['tof']-center_t
         
         data_df_ion['vx'] = self.C_xy*(data_df_ion['x_centered'])#/data_df_ion['tcorr'])
         data_df_ion['vy'] = self.C_xy*(data_df_ion['y_centered'])#/data_df_ion['tcorr'])
@@ -220,6 +238,7 @@ class IonCollection:
         center_y:Optional[float]=None, 
         filter_param:Optional[str]=None, 
         allow_auto_mass_charge:Optional[bool]=None, 
+        fit_t:Optional[bool]=None, 
         shot_array_method:Optional[str]=None,
         C_xy:Optional[float]=None,
         C_z:Optional[float]=None,
@@ -227,6 +246,7 @@ class IonCollection:
         self._data = list()
         self._filter_param = filter_param
         self._allow_auto_mass_charge = allow_auto_mass_charge
+        self._fit_t = fit_t
         self._shot_array_method = shot_array_method
         self._center_x = center_x
         self._center_y = center_y
@@ -242,6 +262,8 @@ class IonCollection:
             optional_kwargs["filter_param"] = self._filter_param
         if self._allow_auto_mass_charge is not None:
             optional_kwargs["allow_auto_mass_charge"] = self._allow_auto_mass_charge
+        if self._fit_t is not None:
+            optional_kwargs["fit_t"] = self._fit_t
         if self._shot_array_method:
             optional_kwargs["shot_array_method"] = self._shot_array_method
         if self._center_x:
@@ -252,6 +274,8 @@ class IonCollection:
             optional_kwargs["C_xy"] = self._C_xy
         if self._C_z:
             optional_kwargs["C_z"] = self._C_z
+            
+        optional_kwargs["mz_calibration"] = self.tof_mz_cal
 
         self._ion_class = partial(Ion, **optional_kwargs)
         
@@ -288,6 +312,7 @@ class IonCollection:
             center_y=self._center_y, 
             filter_param=self._filter_param, 
             allow_auto_mass_charge=self._allow_auto_mass_charge, 
+            fit_t=self._fit_t,
             shot_array_method=self._shot_array_method,
             C_xy=self._C_xy,
             C_z=self._C_z,

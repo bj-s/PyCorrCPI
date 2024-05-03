@@ -10,7 +10,7 @@ setup(
         author_email="fallum@stanford.edu",
         description=DESCRIPTION,
         packages=find_packages(),
-        install_requires=['numpy', 'matplotlib', 'scipy', 'pandas', 'numba'],
+        install_requires=['numpy', 'matplotlib', 'scipy', 'pandas', 'numba', 'periodictable'],
         url='https://github.com/f-allum/PyCCorrCPI/',
         download_url='https://github.com/f-allum/PyCorrCPI/archive/refs/tags/v0.0.3.tar.gz',
         keywords=['Coincidence', 'Covariance', 'Cumulant', 'Velocity-map Imaging']

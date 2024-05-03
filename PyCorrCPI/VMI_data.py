@@ -7,14 +7,45 @@ from .covariance import *
 
 class Ion:
     """Class used to define the parameters to extract data from different ions from a dataset"""
-    def __init__(self, label, filter_i, filter_f, dataset, filter_param='tof',
-        center_x=None, center_y=None, center_t=None, mass=None, charge=None, shot_array_method='range'):
+    def __init__(self, label, filter_i, filter_f, dataset=None, filter_param='tof', 
+                center_x=None, center_y=None, center_t=None, mass=None, charge=None, shot_array_method='range', allow_auto_mass_charge=False,
+                C_xy=None, C_z=None
+                ):
+        self._data_array = None
+        
         self.label = label
         self.filter_i = filter_i
         self.filter_f = filter_f
-        self.filter_param=filter_param
+        self.filter_param = filter_param
         self.shot_array_method = shot_array_method
-        self.mass=mass
+        
+        self.C_xy = C_xy # for momentum calib
+        self.C_z = C_z # for momentum calib
+        self.cal_mom = False
+        
+        if not allow_auto_mass_charge or mass:
+            self.mass = mass
+            self.auto_mass = False
+        else:
+            try:
+                self.mass = get_ion_mass(label)
+                self.auto_mass = True
+            except Exception as e:
+                print(f"Could not auto-compute ion mass for {label}. Error: {e}")
+                self.auto_mass = False
+                self.mass = None
+        
+        if not allow_auto_mass_charge or charge:
+            self.charge = charge
+            self.auto_charge = False
+        else:
+            try:
+                self.charge = get_ion_charge(label)
+                self.auto_charge = True
+            except Exception as e:
+                print(f"Could not auto-compute ion charge for {label}. Error: {e}")
+                self.auto_charge = False
+                self.charge = None
 
         if center_x:
             self.center_x=center_x
@@ -33,9 +64,8 @@ class Ion:
             self.center_t = center_t
         # else:
         #     self.center_t = (self.Ti+self.Tf)/2
-
-        self.grab_data(dataset)
-        self.get_shot_array()
+        if dataset:
+            self.assign_dataset(dataset)
 
             
     def print_details(self):
@@ -49,11 +79,22 @@ class Ion:
             self.data_df = dataset.sep_by_custom(self.filter_i,self.filter_f, self.filter_param)
         except:
             raise Exception("filter_param is not found in dataframe!")
-        self.dataframe_to_arr()
+        self.reset_data_array()
+        
+    @property
+    def data_array(self):
+        if self._data_array is None:
+            self._data_array = self.data_df[["px_AU", "py_AU", "pz_AU", "shot", "pmag_AU"]].to_numpy()
+        return self._data_array
 
-    def dataframe_to_arr(self):
+    def reset_data_array(self):
         """Converts necessary dataframe columns for covariance calculation to an array"""
-        self.data_array = self.data_df[["px_AU", "py_AU", "pz_AU", "shot", "pmag_AU"]].to_numpy()
+        self._data_array = None
+        self.cal_mom = False
+    
+    def assign_dataset(self, dataset):
+        self.grab_data(dataset)
+        self.get_shot_array()
 
     def get_shot_array(self):
         """Find array of shots in dataset which contain this ion"""
@@ -69,9 +110,58 @@ class Ion:
         idx_dict = Dict.empty(
                 key_type=float_single,
                 value_type=float_array)
-
+        
         calculate_indexes(idx_dict,self.shot_array,shot_array_total,self.data_array)
         self.idx_dict=idx_dict
+
+    def calibrate_momenta(self, t0:float, C_xy=None, C_z=None, fit_center=False):
+        data_df_ion = self.data_df
+        
+        if C_xy:
+            self.C_xy = C_xy
+        if C_z:
+            self.C_z = C_z
+            
+        if not self.C_xy or not self.C_z:
+            raise ValueError("C_xy and C_z need to be specified")
+        
+        if fit_center:
+            # fit center not implemented yet
+            data_df_ion['x_centered'] = data_df_ion-self.centre_x_fit
+            data_df_ion['y_centered'] = data_df_ion-self.centre_y_fit
+        else:
+            data_df_ion['x_centered'] = data_df_ion.x-self.center_x
+            data_df_ion['y_centered'] = data_df_ion.y-self.center_y
+            
+        # if this is the first time the dataset has had momentum calibration run on it, populate new columns
+        # in the dataframe
+        if self.cal_mom==False:
+            data_df_ion['ion'] = np.nan
+            data_df_ion['t_relative'] = np.nan
+            data_df_ion['vx'] = np.nan
+            data_df_ion['vy'] = np.nan
+            data_df_ion['vz'] = np.nan
+            data_df_ion['px'] = np.nan
+            data_df_ion['py'] = np.nan
+            data_df_ion['pz'] = np.nan
+            data_df_ion['vmag'] = np.nan
+            data_df_ion['pmag'] = np.nan
+            self.cal_mom=True
+        
+        data_df_ion['t_absolute'] = data_df_ion['tof']-t0
+        data_df_ion['t_centered'] = data_df_ion['tof']-self.center_t
+        
+        data_df_ion['vx'] = self.C_xy*(data_df_ion['x_centered'])#/data_df_ion['tcorr'])
+        data_df_ion['vy'] = self.C_xy*(data_df_ion['y_centered'])#/data_df_ion['tcorr'])
+        data_df_ion['px'] = data_df_ion['vx'] * self.mass
+        data_df_ion['py'] = data_df_ion['vy'] * self.mass
+        data_df_ion['vz'] = (self.C_z*self.charge*(data_df_ion['t_centered']))/self.mass
+        data_df_ion['pz'] = data_df_ion['vz'] * self.mass
+        
+        data_df_ion['pmag'] = np.sqrt((data_df_ion['px']**2+data_df_ion['py']**2+data_df_ion['pz']**2))
+        data_df_ion['vmag'] = np.sqrt((data_df_ion['vx']**2+data_df_ion['vy']**2+data_df_ion['vz']**2))
+        
+        return(data_df_ion)    
 
 
 
@@ -86,12 +176,15 @@ class Dataset:
         self.shot_array_method = shot_array_method
 
         
-        # assert 'x' in self.columns, "Input dataframe is missing 'x'"
-        # assert 'y' in self.columns, "Input dataframe is missing 'y'"
-        # assert 't' in self.columns, "Input dataframe is missing 't'"
+        assert 'x' in self.columns, "Input dataframe is missing 'x'"
+        assert 'y' in self.columns, "Input dataframe is missing 'y'"
+        assert 't' in self.columns, "Input dataframe is missing 't'"
         assert 'shot' in self.columns, "Input dataframe is missing 'shot'"
 
         self.get_shot_array()
+    
+    def __repr__(self):
+        return "PyCorrCPI.Dataset with following df:\n"+repr(self.data_df)
         
         
     # def sep_by_tof(self, Ti, Tf):

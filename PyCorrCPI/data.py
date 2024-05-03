@@ -256,6 +256,9 @@ class IonCollection:
         self._ion_class = partial(Ion, **optional_kwargs)
         
     def __getitem__(self, index):
+        if isinstance(index, str):
+            return self._data[self.labels.index(index)]
+            
         return self._data[index]
     
     def __iter__(self, *args, **kwargs):
@@ -273,6 +276,10 @@ class IonCollection:
     @property
     def data(self):
         return self._data
+    
+    @property
+    def labels(self):
+        return [ion.label for ion in self.data]
     
     @property
     def config(self):

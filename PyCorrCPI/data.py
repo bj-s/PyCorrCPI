@@ -23,12 +23,13 @@ class Ion:
         self.filter_f = filter_f
         self.filter_param = filter_param
         self.shot_array_method = shot_array_method
+        self.allow_auto_mass_charge = allow_auto_mass_charge
         
         self.C_xy = C_xy # for momentum calib
         self.C_z = C_z # for momentum calib
         self.cal_mom = False
         
-        if not allow_auto_mass_charge or mass:
+        if not self.allow_auto_mass_charge or mass:
             self.mass = mass
             self.auto_mass = False
         else:
@@ -40,7 +41,7 @@ class Ion:
                 self.auto_mass = False
                 self.mass = None
         
-        if not allow_auto_mass_charge or charge:
+        if not self.allow_auto_mass_charge or charge:
             self.charge = charge
             self.auto_charge = False
         else:
@@ -256,8 +257,8 @@ class IonCollection:
             filter_param=self._filter_param, 
             allow_auto_mass_charge=self._allow_auto_mass_charge, 
             shot_array_method=self._shot_array_method,
-            C_xy=self.C_xy,
-            C_z=self.C_z,
+            C_xy=self._C_xy,
+            C_z=self._C_z,
         )
     
     def export_config_file(self, output_path:str):
@@ -282,6 +283,7 @@ class IonCollection:
         ic = cls(**full_config["IonCollection"])
         for ion_conf in full_config["Ions"]:
             ic.add_ion(**ion_conf)
+        return ic
     
     @wraps(Ion)
     def add_ion(self, *args, **kwargs):

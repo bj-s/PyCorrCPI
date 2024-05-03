@@ -14,13 +14,35 @@ class Ion:
     """Class used to define the parameters to extract data from different ions from a dataset"""
     def __init__(self, label, filter_i, filter_f, dataset=None, filter_param='tof', 
                 center_x=None, center_y=None, center_t=None, mass=None, charge=None, shot_array_method='range', allow_auto_mass_charge=False,
-                C_xy=None, C_z=None
+                C_xy=None, C_z=None, filter_query:str=None
                 ):
+        """
+        Parameters
+            label (str):
+            filter_i (float): start of tof gate
+            filter_f (float): end of tof gate
+            dataset (DataSet, optional):
+            filter_param (str, optional):
+            center_x (float, optional):
+            center_y (float, optional):
+            center_t (float, optional):
+            mass (float, optional):
+            charge (float, optional):
+            shot_array_method (str, optional):
+            allow_auto_mass_charge (bool, optional):
+            C_xy (float, optional):
+            C_z (float, optional):
+            filter_query (str, optional):
+                query that will be applied to the ions data frame, 
+                enables realization of comples rois to exclude data (e.g. warm background)
+        
+        """
         self._data_array = None
         
         self.label = label
         self.filter_i = filter_i
         self.filter_f = filter_f
+        self.filter_query = filter_query
         self.filter_param = filter_param
         self.shot_array_method = shot_array_method
         self.allow_auto_mass_charge = allow_auto_mass_charge
@@ -88,7 +110,8 @@ class Ion:
             shot_array_method=self.shot_array_method, 
             allow_auto_mass_charge=self.allow_auto_mass_charge,
             C_xy=self.C_xy,
-            C_z=self.C_z
+            C_z=self.C_z,
+            filter_query=self.filter_query,
         )
 
             
@@ -103,6 +126,8 @@ class Ion:
             self.data_df = dataset.sep_by_custom(self.filter_i,self.filter_f, self.filter_param)
         except:
             raise Exception("filter_param is not found in dataframe!")
+        if self.filter_query:
+            self.data_df = self.data_df.query(self.filter_query)
         self.reset_data_array()
         
     @property
@@ -277,6 +302,7 @@ class IonCollection:
     def from_config_file(cls, input_path):
         """
         Construct IonCollection incl. ions from a given config file
+        usage, e.g.: cpi.IonCollection.from_config_file("test.json")
         """
         with open(input_path, 'r') as f:
             full_config = json.load(f)  

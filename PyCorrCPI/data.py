@@ -1,7 +1,7 @@
 from .imports import *
 from .helpers_numba import *
 from .covariance import *
-from .VMI_utils import TofCalibration, get_ion_mass, get_ion_charge, get_ion_mz
+from .helpers_tof import TofCalibration, get_ion_mass, get_ion_charge, get_ion_mz
 
 
 

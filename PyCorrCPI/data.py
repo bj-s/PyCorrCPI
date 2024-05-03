@@ -268,9 +268,9 @@ class Dataset:
         self.shot_array_method = shot_array_method
 
         
-        assert 'x' in self.columns, "Input dataframe is missing 'x'"
-        assert 'y' in self.columns, "Input dataframe is missing 'y'"
-        assert 't' in self.columns, "Input dataframe is missing 't'"
+        # assert 'x' in self.columns, "Input dataframe is missing 'x'"
+        # assert 'y' in self.columns, "Input dataframe is missing 'y'"
+        # assert 't' in self.columns, "Input dataframe is missing 't'"
         assert 'shot' in self.columns, "Input dataframe is missing 'shot'"
 
         self.get_shot_array()

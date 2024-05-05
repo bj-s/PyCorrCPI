@@ -6,13 +6,13 @@ import os
 from .imports import *
 from .helpers_numba import *
 from .covariance import *
-from .helpers_tof import TofCalibration, get_ion_mass, get_ion_charge, get_ion_mz
+from .helpers_tof import TofCalibration, get_ion_mass, get_ion_charge, get_ion_mz, parse_chemical_formula
 
 
 
 class Ion:
     """Class used to define the parameters to extract data from different ions from a dataset"""
-    def __init__(self, label, filter_i, filter_f, dataset=None, filter_param='tof', 
+    def __init__(self, label, filter_i, filter_f, dataset=None, filter_param='tof', filter_param_type:str="abs",
                 center_x=None, center_y=None, center_t=None, mass=None, charge=None, shot_array_method='range', allow_auto_mass_charge=False, fit_t=False,
                 C_xy=None, C_z=None, filter_query:str=None, mz_calibration:TofCalibration=None
                 ):
@@ -23,6 +23,11 @@ class Ion:
             filter_f (float): end of tof gate
             dataset (DataSet, optional):
             filter_param (str, optional):
+            filter_param_type (str, optional):
+                specifies how to interpret the filter range provided (except `abs`, filter_param=`tof` required)
+                - `abs`: gives an absolute lower and upper bound for the given filter_param
+                - `rel`: gives a range relative to center_t or fitted_center_t in the units of tof (depends on fit_t)
+                - `frac`: gives a range as a fraction of center_t or fitted_center_t (depends on fit_t)
             center_x (float, optional):
             center_y (float, optional):
             center_t (float, optional):
@@ -37,16 +42,17 @@ class Ion:
                 query that will be applied to the ions data frame, 
                 enables realization of comples rois to exclude data (e.g. warm background)
             mz_calibration (TofCalibration, optional):
-                ToF calibration to have a fitted center_t
+                ToF calibration to have a fitted fitted_center_t
         
         """
         self._data_array = None
         
         self.label = label
-        self.filter_i = filter_i
-        self.filter_f = filter_f
+        self._filter_i = filter_i
+        self._filter_f = filter_f
         self.filter_query = filter_query
         self.filter_param = filter_param
+        self.filter_param_type = filter_param_type
         self.shot_array_method = shot_array_method
         self.allow_auto_mass_charge = allow_auto_mass_charge
         self.mz_calibration = mz_calibration
@@ -93,23 +99,54 @@ class Ion:
             self.center_given=True
         else:
             self.center_given=False
-        if center_t:
-            self.center_t = center_t
-        # else:
-        #     self.center_t = (self.Ti+self.Tf)/2
+        self._center_t = center_t
         if dataset:
             self.assign_dataset(dataset)
             
+    def set_filter_gates(self, filter_i, filter_f, filter_param=None, filter_param_type=None):
+        if filter_param:
+            self.filter_param=filter_param
+        if filter_param_type:
+            self.filter_param_type=filter_param_type
+        self._filter_i = filter_i
+        self._filter_f = filter_f
+        
+        self.reset_data()
+        
+    
+    @property
+    def filter_i(self):
+        if self.filter_param_type == 'abs':
+            return self._filter_i
+        elif self.filter_param_type == 'rel':
+            return self.center_t+self._filter_i
+        elif self.filter_param_type == 'frac':
+            return self.center_t * self._filter_i
+        
+        raise ValueError("Cannot compute `filter_i` invalid filter_param_type config")
+    
+    @property
+    def filter_f(self):
+        if self.filter_param_type == 'abs':
+            return self._filter_f
+        elif self.filter_param_type == 'rel':
+            return self.center_t+self._filter_f
+        elif self.filter_param_type == 'frac':
+            return self.center_t * self._filter_f
+        
+        raise ValueError("Cannot compute `filter_f` invalid filter_param_type config")
+    
     @property
     def config(self):
         return dict(
             label=self.label, 
-            filter_i=self.filter_i, 
-            filter_f=self.filter_f, 
+            filter_i=self._filter_i, 
+            filter_f=self._filter_f, 
             filter_param=self.filter_param,
+            filter_param_type=self.filter_param_type,
             center_x=self.center_x, 
             center_y=self.center_y, 
-            center_t=self.center_t, 
+            center_t=self._center_t, 
             mass=self.mass, 
             charge=self.charge, 
             shot_array_method=self.shot_array_method, 
@@ -118,7 +155,7 @@ class Ion:
             C_xy=self.C_xy,
             C_z=self.C_z,
             filter_query=self.filter_query,
-            mz_calibration=self.mz_calibration,
+            mz_calibration=self.mz_calibration.coeffs,
         )
 
             
@@ -126,7 +163,12 @@ class Ion:
         for key,value in self.__dict__.items():
             if key not in ['data_df','data_array', 'shot_array']:
                 print(f"'{key}':{value}")
-
+    
+    def reset_data(self):
+        self.data_df = None
+        self.shot_array = None
+        self.reset_data_array()
+    
     def grab_data(self,dataset):
         """Gets data corresponding to ion from dataset based on the inputted filter"""
         try:
@@ -134,6 +176,9 @@ class Ion:
         except:
             raise Exception("filter_param is not found in dataframe!")
         if self.filter_query:
+            center_x = self.center_x
+            center_y = self.center_y
+            center_t = self.center_t
             self.data_df = self.data_df.query(self.filter_query)
         self.reset_data_array()
         
@@ -154,6 +199,9 @@ class Ion:
 
     def get_shot_array(self):
         """Find array of shots in dataset which contain this ion"""
+        if len(self.data_df) == 0:
+            self.shot_array = np.array([])
+            return 
         if self.shot_array_method=='range':
             self.shot_array = np.arange(np.min(self.data_df.shot), np.max(self.data_df.shot))
         elif self.shot_array_method=='unique':
@@ -172,12 +220,18 @@ class Ion:
     
     @property
     def mz(self):
-        return self.charge/self.mass
+        return self.mass/self.charge
         
     @property
     def fitted_center_t(self):
-        if self.mz_calibration:
+        if self.mz_calibration.coeffs:
             return self.mz_calibration.mz_to_tof(self.mz)
+        
+    @property
+    def center_t(self):
+        if self.fit_t and self.mz_calibration.coeffs:
+            return self.fitted_center_t
+        return self._center_t
 
     def calibrate_momenta(self, t0:float, C_xy=None, C_z=None, fit_center=False):
         data_df_ion = self.data_df
@@ -198,7 +252,7 @@ class Ion:
             data_df_ion['x_centered'] = data_df_ion.x-self.center_x
             data_df_ion['y_centered'] = data_df_ion.y-self.center_y
             
-        center_t = self.fitted_center_t if self.fit_t and self.mz_calibration else self.center_t
+        center_t = self.center_t
             
         # if this is the first time the dataset has had momentum calibration run on it, populate new columns
         # in the dataframe
@@ -242,7 +296,23 @@ class IonCollection:
         shot_array_method:Optional[str]=None,
         C_xy:Optional[float]=None,
         C_z:Optional[float]=None,
+        mz_calibration_coeffs:Optional[tuple]=None,
+        allow_auto_ion_creation=False
     ):
+        """
+        center_x:Optional[float]=None, 
+        center_y:Optional[float]=None, 
+        filter_param:Optional[str]=None, 
+        allow_auto_mass_charge:Optional[bool]=None, 
+        fit_t:Optional[bool]=None, 
+        shot_array_method:Optional[str]=None,
+        C_xy:Optional[float]=None,
+        C_z:Optional[float]=None,
+        mz_calibration_coeffs:Optional[tuple]=None,
+        allow_auto_ion_creation=False
+            if true, when requesting a label that is not in the label list,
+            the ion parameters are guessed
+        """
         self._data = list()
         self._filter_param = filter_param
         self._allow_auto_mass_charge = allow_auto_mass_charge
@@ -252,8 +322,10 @@ class IonCollection:
         self._center_y = center_y
         self._C_xy = C_xy
         self._C_z = C_z
+        self._dataset = None
+        self.allow_auto_ion_creation = allow_auto_ion_creation
         
-        self.tof_mz_cal = TofCalibration()
+        self.tof_mz_cal = TofCalibration(mz_calibration_coeffs)
         
         
 
@@ -281,7 +353,23 @@ class IonCollection:
         
     def __getitem__(self, index):
         if isinstance(index, str):
-            return self._data[self.labels.index(index)]
+            _labels = self.labels
+            if index in _labels:
+                return self._data[_labels.index(index)]
+            else:
+                if self.allow_auto_ion_creation:
+                    try:
+                        print(f"{index} not in available labels, failed to automatically add it as a new ion")
+                        parse_chemical_formula(index)
+                        ion = self.add_ion(index, 0.99, 1.01, filter_param_type="frac")
+                        if self._dataset:
+                            ion.assign_dataset(self._dataset)
+                            if self.tof_mz_cal.coeffs:
+                                ion.calibrate_momenta(self.tof_mz_cal.t0)
+                    except:
+                        raise KeyError(f"{index} not in available labels, failed to automatically add it as a new ion")
+                else:
+                    raise KeyError(f"{index} not in available labels")
             
         return self._data[index]
     
@@ -316,6 +404,7 @@ class IonCollection:
             shot_array_method=self._shot_array_method,
             C_xy=self._C_xy,
             C_z=self._C_z,
+            mz_calibration_coeffs=self.tof_mz_cal.coeffs,
         )
     
     def export_config_file(self, output_path:str):
@@ -331,24 +420,33 @@ class IonCollection:
             json.dump(full_config, f)    
     
     @classmethod
-    def from_config_file(cls, input_path):
+    def from_config_file(cls, input_path, allow_auto_ion_creation=False):
         """
         Construct IonCollection incl. ions from a given config file
         usage, e.g.: cpi.IonCollection.from_config_file("test.json")
         """
         with open(input_path, 'r') as f:
             full_config = json.load(f)  
+            full_config["allow_auto_ion_creation"]=allow_auto_ion_creation
         ic = cls(**full_config["IonCollection"])
         for ion_conf in full_config["Ions"]:
+            if "mz_calibration" in ion_conf:
+                if ion_conf["mz_calibration"] == ic.tof_mz_cal.coeffs:
+                    ion_conf["mz_calibration"] = ic.tof_mz_cal
+                else:
+                    ion_conf["mz_calibration"] = TofCalibration(ion_conf["mz_calibration"])
             ic.add_ion(**ion_conf)
         return ic
     
     @wraps(Ion)
     def add_ion(self, *args, **kwargs):
         # create ion and append it
-        self._data.append(self._ion_class(*args, **kwargs))
+        ion = self._ion_class(*args, **kwargs)
+        self._data.append(ion)
+        return ion
         
     def assign_dataset(self, dataset):
+        self._dataset = dataset
         for ion in self._data:
             ion.assign_dataset(dataset)
             
@@ -356,7 +454,7 @@ class IonCollection:
         tof_list = []
         mz_list = []
         for ion in self.data:
-            if ion.mass is not None and ion.charge is not None:
+            if ion.mass is not None and ion.charge is not None and ion._center_t is not None:
                 tof_list.append(ion.center_t)
                 mz_list.append(ion.mass/ion.charge)
 
@@ -467,38 +565,38 @@ class Dataset:
         return(data_df_ion)
     
     ### should be moved out of class
-    def mz_calibration(self, ion_list):
-        tof_list = []
-        mz_list = []
-        for ion in ion_list:
-            if (ion.mass&ion.charge):
-                tof_list.append(ion.centre_t)
-                mz_list.append(ion.mass/ion.charge)
+#     def mz_calibration(self, ion_list):
+#         tof_list = []
+#         mz_list = []
+#         for ion in ion_list:
+#             if (ion.mass&ion.charge):
+#                 tof_list.append(ion.centre_t)
+#                 mz_list.append(ion.mass/ion.charge)
 
-        mz_arr = np.array(mz_list)
-        tof_arr = np.array(tof_list)
+#         mz_arr = np.array(mz_list)
+#         tof_arr = np.array(tof_list)
 
-        # Using np.polyfit to do the linear fitting
-        coeffs_sqmz_tof = np.polyfit(np.sqrt(mz_arr[mz_arr>0]), tof_arr[mz_arr>0], 1)
+#         # Using np.polyfit to do the linear fitting
+#         coeffs_sqmz_tof = np.polyfit(np.sqrt(mz_arr[mz_arr>0]), tof_arr[mz_arr>0], 1)
 
-        # Using IPython.Display to print LaTeX
-        display(Math(r"t = %.2f\sqrt{\frac{m}{z}} + %.2f" % (coeffs_sqmz_tof[0], coeffs_sqmz_tof[1])))
+#         # Using IPython.Display to print LaTeX
+#         display(Math(r"t = %.2f\sqrt{\frac{m}{z}} + %.2f" % (coeffs_sqmz_tof[0], coeffs_sqmz_tof[1])))
 
-        coeffs_tof_sqmz = np.polyfit(tof_arr[z_arr>0], np.sqrt(z_arr[z_arr>0]),1)
+#         coeffs_tof_sqmz = np.polyfit(tof_arr[z_arr>0], np.sqrt(z_arr[z_arr>0]),1)
 
-        display(Math(r"\sqrt{\frac{m}{z}} = %.4ft + %.4f" % (coeffs_tof_sqmz[0], coeffs_tof_sqmz[1])))
+#         display(Math(r"\sqrt{\frac{m}{z}} = %.4ft + %.4f" % (coeffs_tof_sqmz[0], coeffs_tof_sqmz[1])))
         
-        self.t0 = coeffs_sqmz_tof[1]
+#         self.t0 = coeffs_sqmz_tof[1]
         
-        self.coeffs_sqmz_tof = coeffs_sqmz_tof
-        self.coeffs_tof_sqmz = coeffs_tof_sqmz
+#         self.coeffs_sqmz_tof = coeffs_sqmz_tof
+#         self.coeffs_tof_sqmz = coeffs_tof_sqmz
         
-        self.apply_mz_calibration()
+#         self.apply_mz_calibration()
 
-        return(coeffs_sqmz_tof, coeffs_tof_sqmz)
+#         return(coeffs_sqmz_tof, coeffs_tof_sqmz)
     
-    def apply_mz_calibration(self):
-        self.data_df['cal_mz'] = self.data_df['t']*self.coeffs_tof_sqmz[0] + self.coeffs_tof_sqmz[1]
+    # def apply_mz_calibration(self):
+    #     self.data_df['cal_mz'] = self.data_df['t']*self.coeffs_tof_sqmz[0] + self.coeffs_tof_sqmz[1]
         
     def apply_jet_correction(self):
         self.data_df['xcorr'] = self.data_df['x']

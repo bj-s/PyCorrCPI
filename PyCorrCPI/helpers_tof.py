@@ -1,11 +1,14 @@
 import periodictable as pse
 from scipy.optimize import curve_fit
 from collections.abc import Iterable
+import numpy as np
 
 
 def parse_chemical_formula(chemical_formula:str)->dict:
     """
     converts chemical formular (eg. CH2IBr) into dictionary
+    to specify isotopes use the following syntax:
+    CH2I[80]Br -> here the isotope [80] applies to Br
     with elements as key and number of atoms per element as value
     
     Parameters:
@@ -17,15 +20,30 @@ def parse_chemical_formula(chemical_formula:str)->dict:
     (dict): keys are the element symbols and value their count
     """
     elements = list()
+    isotopes = list()
     counts = list()
+    isotope_active=False
     for c in chemical_formula:
-        if c.isupper():
+        if c == "[":
+            isotope_active = True
+        elif c=="]":
+            isotope_active = False
+        elif c.isupper():
             if len(elements)>len(counts):
                 counts.append(1)
+            if len(isotopes)==len(elements):
+                isotopes.append(None)
             elements.append(c)
         elif c.islower():
             elements[-1]+=c
         elif c.isnumeric():
+            if isotope_active:
+                assert len(isotopes)>=len(elements), "isotopes must keep up with elements"
+                elif len(isotopes)==len(elements):
+                    isotopes.append(c)
+                else:
+                    isotopes[-1]+=c
+                    
             if len(elements)>len(counts):
                 counts.append(c)
             else:
@@ -37,6 +55,8 @@ def parse_chemical_formula(chemical_formula:str)->dict:
         counts.append(1)
         
     counts = [int(c) for c in counts]
+    elements = [(e if iso is None else f"[{iso}]{e}") for iso, e in zip(isotopes, elements)]
+    
     return dict(zip(elements, counts))
 
 
@@ -46,7 +66,11 @@ def get_molecule_mass(chemical_formula:str):
     """
     
     count_by_element = parse_chemical_formula(chemical_formula)
-    return sum([getattr(pse, e).mass*count_by_element[e] for e in count_by_element])
+    
+    elements = [e.split("]")[-1] for e in count_by_element]
+    isotopes = [(e.split("]")[0][1:] if len(e.split("]"))>1 else None) for e in count_by_element]
+    
+    return sum([(getattr(pse, el) if not iso else getattr(pse, el)[iso]).mass*count_by_element[key] for el, iso, key in zip(elements, isotopes, count_by_element)])
 
 
 # function to parse ion strings -> i.e. [chemical formula]^[n]+

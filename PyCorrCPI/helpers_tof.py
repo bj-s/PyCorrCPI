@@ -39,10 +39,10 @@ def parse_chemical_formula(chemical_formula:str)->dict:
         elif c.isnumeric():
             if isotope_active:
                 assert len(isotopes)>=len(elements), "isotopes must keep up with elements"
-                elif len(isotopes)==len(elements):
-                    isotopes.append(c)
-                else:
-                    isotopes[-1]+=c
+            if len(isotopes)==len(elements):
+                isotopes.append(c)
+            else:
+                isotopes[-1]+=c
                     
             if len(elements)>len(counts):
                 counts.append(c)
